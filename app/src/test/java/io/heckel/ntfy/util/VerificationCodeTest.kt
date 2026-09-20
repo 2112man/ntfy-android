@@ -141,15 +141,19 @@ class VerificationCodeTest {
         // No keyword and no other context: a 4-6 digit plain number is still accepted by
         // the tier-2 generic fallback (that is the documented, deliberately lenient rule
         // for keyword-less SMS codes). It is NOT unconditional: longer numbers, glued
-        // number groups, years, amounts and quantities are all rejected (see other tests).
-        assertEquals("884512", VerificationCode.extract("流水号：884512"))
+        // number groups, years, amounts, quantities and explicit non-code labels (see the
+        // phase 7 tests) are all rejected.
+        assertEquals("884512", VerificationCode.extract("884512"))
+        assertEquals("583921", VerificationCode.extract("583921"))
+        assertEquals("884512", VerificationCode.extract("Code 884512 arrived"))
     }
 
     @Test
-    fun `phase6 mixed alphanumeric account without keyword keeps previous behavior`() {
+    fun `phase6 mixed alphanumeric without keyword keeps previous behavior`() {
         // No verification-code context: mixed alphanumeric tokens are accepted by the
-        // tier-3 fallback. Phase 6 explicitly does not extend or narrow this behavior.
-        assertEquals("A7K92Q", VerificationCode.extract("账号：A7K92Q"))
+        // tier-3 fallback. Phase 7 only narrows this for explicit non-code labels.
+        assertEquals("A7K92Q", VerificationCode.extract("A7K92Q"))
+        assertEquals("A7K92Q", VerificationCode.extract("Your token A7K92Q is ready"))
     }
 
     @Test
@@ -164,5 +168,62 @@ class VerificationCodeTest {
         assertEquals("552010", VerificationCode.extract("您的验证码是 552010，10分钟内有效"))
         assertEquals("884512", VerificationCode.extract("您的验证码是 884512，10分钟内有效"))
         assertNull(VerificationCode.extract("今天有 552010 人参加活动"))
+    }
+
+    // ---------- Phase 7: explicit non-code labels (order/tracking/phone/account/amount) ----------
+
+    @Test
+    fun `phase7 rejects values of explicitly non-code fields`() {
+        assertNull(VerificationCode.extract("流水号：884512"))
+        assertNull(VerificationCode.extract("账号：A7K92Q"))
+        assertNull(VerificationCode.extract("订单号：1234567890"))
+        assertNull(VerificationCode.extract("订单编号：123456"))
+        assertNull(VerificationCode.extract("交易号：583921"))
+        assertNull(VerificationCode.extract("交易编号：A7K92Q"))
+        assertNull(VerificationCode.extract("运单号：1234567890123456"))
+        assertNull(VerificationCode.extract("快递单号：SF1234567890"))
+        assertNull(VerificationCode.extract("手机号：13812345678"))
+        assertNull(VerificationCode.extract("金额：884512"))
+    }
+
+    @Test
+    fun `phase7 rejects other non-code labels and separators`() {
+        assertNull(VerificationCode.extract("流水号 884512"))
+        assertNull(VerificationCode.extract("账号 A7K92Q"))
+        assertNull(VerificationCode.extract("电话：123456"))
+        assertNull(VerificationCode.extract("电话号码 583921"))
+        assertNull(VerificationCode.extract("用户ID：884512"))
+        assertNull(VerificationCode.extract("用户 ID：A7K92Q"))
+        assertNull(VerificationCode.extract("用户编号 123456"))
+        assertNull(VerificationCode.extract("帐号：583921"))
+        assertNull(VerificationCode.extract("价格：884512"))
+        assertNull(VerificationCode.extract("物流单号：SF123456789"))
+    }
+
+    @Test
+    fun `phase7 keeps real verification codes working`() {
+        assertEquals("552010", VerificationCode.extract("验证码：552010"))
+        assertEquals("A7K92Q", VerificationCode.extract("验证码：A7K92Q"))
+        assertEquals("583921", VerificationCode.extract("OTP: 583921"))
+        // Generic fallbacks are NOT cancelled
+        assertEquals("583921", VerificationCode.extract("583921"))
+        assertEquals("A7K92Q", VerificationCode.extract("A7K92Q"))
+        assertEquals("552010", VerificationCode.extract("您的验证码是 552010，10分钟内有效"))
+    }
+
+    @Test
+    fun `phase7 keeps codes that appear elsewhere in a message with a non-code label`() {
+        // The non-code label is not adjacent to the actual code, so the code is found
+        assertEquals("552010", VerificationCode.extract("流水号 884512，验证码 552010"))
+        assertEquals("552010", VerificationCode.extract("订单号 1234567890 已发货，验证码 552010"))
+        // The account value is rejected, the real code later in the message is returned
+        assertEquals("A1B2C3", VerificationCode.extract("账号：A7K92Q，您的验证码：A1B2C3请查收"))
+    }
+
+    @Test
+    fun `phase7 does not treat verification wording as a non-code label`() {
+        // "电话" inside a sentence must not reject a real code (label is not adjacent)
+        assertEquals("552010", VerificationCode.extract("您的电话验证码是 552010"))
+        assertEquals("552010", VerificationCode.extract("验证码 552010（请勿告知他人）"))
     }
 }

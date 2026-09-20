@@ -21,6 +21,9 @@ package io.heckel.ntfy.util
  * - part of a longer number group ("400-123-4567" -> "4567" is rejected)
  * - a phone-like or order-like long number (> 8 digits)
  * - an amount of money or a quantity ("¥1234", "1234元", "123456 人")
+ * - the value of an explicitly non-code field, i.e. directly preceded by a label
+ *   such as "订单号", "流水号", "运单号", "手机号", "账号" or "金额"
+ *   ("流水号：884512", "账号：A7K92Q")
  *
  * This class is pure Kotlin without Android dependencies, so it is fully unit-testable.
  */
@@ -51,6 +54,23 @@ object VerificationCode {
         '组', '批', '种', '页', '只', '辆', '瓶', '包', '枚', '颗', '根', '支', '双',
         '套', '部', '点', '倍', '层', '楼', '期', '周', '秒'
     )
+
+    // Labels that clearly mark a value as some other business field (order number,
+    // tracking number, phone number, account, amount, ...). A candidate directly
+    // after one of these is rejected, e.g. "流水号：884512" or "账号：A7K92Q".
+    // The label must be adjacent to the candidate (only up to 4 non-alphanumeric
+    // characters in between), so a code elsewhere in the same message still works:
+    // "流水号 884512，验证码 552010" -> "552010".
+    private const val REJECT_KEYWORDS =
+        "订单编号|订单号|流水号|交易编号|交易号|快递单号|快递编号|运单号|物流单号|" +
+            "手机号码|手机号|电话号码|电话|用户编号|用户\\s?ID|用户id|账号|帐号|账户|金额|价格"
+    private val REJECT_CONTEXT_PATTERN = Regex(
+        "(?:$REJECT_KEYWORDS)[^A-Za-z0-9]{0,4}$",
+        RegexOption.IGNORE_CASE
+    )
+
+    // How far back (in characters) we look for a rejecting label
+    private const val REJECT_CONTEXT_WINDOW = 16
 
     /**
      * Returns the first verification code found in [message], or null if the
@@ -83,6 +103,9 @@ object VerificationCode {
             if (isGluedToLongerNumber(text, tokenStart, tokenEnd) || isMoneyOrDateLike(text, tokenStart, tokenEnd)) {
                 continue
             }
+            if (isRejectedContext(text, tokenStart)) {
+                continue
+            }
             val hasDigit = token.any { it.isDigit() }
             val hasLetter = token.any { it.isLetter() }
             val valid = if (hasLetter) {
@@ -109,6 +132,9 @@ object VerificationCode {
             if (isGluedToLongerNumber(text, start, end) || isMoneyOrDateLike(text, start, end)) {
                 continue
             }
+            if (isRejectedContext(text, start)) {
+                continue
+            }
             if (isYearLike(token)) {
                 continue
             }
@@ -129,6 +155,9 @@ object VerificationCode {
             if (isGluedToLongerNumber(text, start, end) || isMoneyOrDateLike(text, start, end)) {
                 continue
             }
+            if (isRejectedContext(text, start)) {
+                continue
+            }
             val hasDigit = token.any { it.isDigit() }
             val hasLetter = token.any { it.isLetter() }
             if (hasDigit && hasLetter) {
@@ -136,6 +165,19 @@ object VerificationCode {
             }
         }
         return null
+    }
+
+    /**
+     * True if the candidate starting at [start] is directly preceded by a label
+     * that marks it as a different business field (order/tracking/phone/account/
+     * amount...), e.g. "流水号：884512".
+     */
+    private fun isRejectedContext(text: String, start: Int): Boolean {
+        if (start <= 0) {
+            return false
+        }
+        val from = maxOf(0, start - REJECT_CONTEXT_WINDOW)
+        return REJECT_CONTEXT_PATTERN.containsMatchIn(text.substring(from, start))
     }
 
     private fun isAlphanumeric(token: String): Boolean {

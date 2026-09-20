@@ -19,10 +19,12 @@ import io.heckel.ntfy.util.formatDateShort
  * Adapter for the home ("messages") screen: shows messages from all (or the
  * user-selected) subscribed topics in Material 3 cards, newest first.
  *
- * Each card shows: topic badge, time, title, body, the full subscription
- * address of the message source, and — when the body contains a verification
- * code (detected with the same VerificationCode rules used for the notification
- * action) — a "copy verification code" button that copies exactly the code.
+ * Each card shows: subscription name badge, time, title, body and — when the
+ * body contains a verification code (detected with the same VerificationCode
+ * rules used for the notification action) — a "copy verification code" button
+ * that copies exactly the code. The badge shows the subscription's custom
+ * display name (falling back to the topic) and is hidden when the home screen
+ * shows only a single subscription (the app bar shows that name instead).
  * Messages that still have an active system notification (notificationId != 0)
  * are visually marked as unread.
  */
@@ -30,23 +32,40 @@ class MessagesAdapter(
     private val onClick: (MessageWithSubscription) -> Unit
 ) : ListAdapter<MessageWithSubscription, MessagesAdapter.ViewHolder>(MessageDiff) {
 
+    /**
+     * Whether the subscription name badge is shown on each card. Set to false
+     * when the home screen only shows a single subscription, because the app bar
+     * already shows that subscription's name.
+     */
+    var showSubscriptionBadge: Boolean = true
+        set(value) {
+            if (field != value) {
+                field = value
+                notifyItemRangeChanged(0, itemCount, PAYLOAD_BADGE)
+            }
+        }
+
     inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         private val topic: TextView = view.findViewById(R.id.home_item_topic)
         private val time: TextView = view.findViewById(R.id.home_item_time)
         private val title: TextView = view.findViewById(R.id.home_item_title)
         private val message: TextView = view.findViewById(R.id.home_item_message)
-        private val url: TextView = view.findViewById(R.id.home_item_url)
         private val copyCodeButton: MaterialButton = view.findViewById(R.id.home_item_copy_code)
         private val unreadDot: View = view.findViewById(R.id.home_item_unread_dot)
 
-        fun bind(msg: MessageWithSubscription) {
+        fun bind(msg: MessageWithSubscription, payloads: List<Any>) {
             val context = itemView.context
             val n = msg.notification
 
-            // Message source: user-friendly topic name + full subscription address,
-            // both taken from the database-linked subscription data (not the body)
+            // Message source: the subscription's custom display name, falling back
+            // to the topic (never the URL or the message body).
+            // INVISIBLE (not GONE) keeps the row height so the dot/time/title stay
+            // in place when the badge is hidden in single-subscription mode.
             topic.text = msg.displayName?.takeIf { it.isNotBlank() } ?: msg.topic
-            url.text = "${msg.baseUrl}/${msg.topic}"
+            if (payloads.isEmpty() || payloads.contains(PAYLOAD_BADGE)) {
+                topic.visibility = if (showSubscriptionBadge) View.VISIBLE else View.INVISIBLE
+            }
+
             time.text = formatDateShort(n.timestamp)
 
             if (n.title.isBlank()) {
@@ -81,8 +100,12 @@ class MessagesAdapter(
         return ViewHolder(view)
     }
 
+    override fun onBindViewHolder(holder: ViewHolder, position: Int, payloads: List<Any>) {
+        holder.bind(getItem(position), payloads)
+    }
+
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-        holder.bind(getItem(position))
+        holder.bind(getItem(position), emptyList())
     }
 
     object MessageDiff : DiffUtil.ItemCallback<MessageWithSubscription>() {
@@ -94,5 +117,9 @@ class MessagesAdapter(
         override fun areContentsTheSame(oldItem: MessageWithSubscription, newItem: MessageWithSubscription): Boolean {
             return oldItem == newItem
         }
+    }
+
+    companion object {
+        private const val PAYLOAD_BADGE = "badge"
     }
 }

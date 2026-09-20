@@ -51,6 +51,7 @@ import com.google.android.material.floatingactionbutton.FloatingActionButton
 import io.heckel.ntfy.BuildConfig
 import io.heckel.ntfy.R
 import io.heckel.ntfy.app.Application
+import io.heckel.ntfy.db.HomeConfig
 import io.heckel.ntfy.db.MessageWithSubscription
 import io.heckel.ntfy.db.Repository
 import io.heckel.ntfy.db.Subscription
@@ -121,6 +122,9 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
     private var hasMessages = false
     private var homeSearchQuery: String? = null
     private var allMessages: List<MessageWithSubscription> = emptyList()
+    private var allSubscriptions: List<Subscription> = emptyList()
+    private var homeConfig: HomeConfig? = null
+    private var homeTitle: String? = null // Custom title for the messages tab in single-subscription mode
 
     // Other stuff
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
@@ -238,6 +242,7 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
                 // Update main list
                 adapter.submitList(subscriptions as MutableList<Subscription>)
                 hasSubscriptions = subscriptions.isNotEmpty()
+                allSubscriptions = subscriptions
 
                 // Clean up home selection entries of deleted subscriptions, so the
                 // "selected subscriptions" home mode does not accumulate stale IDs.
@@ -262,6 +267,7 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
                 showHideBatteryBanner(subscriptions)
                 showHideWebSocketBanner(subscriptions)
                 showHideWebSocketReconnectBanner()
+                updateHomeHeaderAndBadges()
                 applyTabVisibility()
             }
         }
@@ -317,7 +323,9 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
             homeSearchQuery = query
             applyHomeFilter()
         }
-        homeViewModel.config.observe(this) {
+        homeViewModel.config.observe(this) { config ->
+            homeConfig = config
+            updateHomeHeaderAndBadges()
             updateHomeEmptyState()
             applyTabVisibility()
         }
@@ -1091,7 +1099,7 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
 
     private fun updateTitle() {
         title = when (currentTab) {
-            TAB_MESSAGES -> getString(R.string.home_title)
+            TAB_MESSAGES -> homeTitle ?: getString(R.string.home_title)
             TAB_SETTINGS -> getString(R.string.settings_title)
             else -> getString(R.string.main_action_bar_title)
         }
@@ -1145,6 +1153,50 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
         Log.d(TAG, "applyTabVisibility: tab=$currentTab hasSubscriptions=$hasSubscriptions hasMessages=$hasMessages " +
             "subsList=${subscriptionsListContainer.visibility} homeContainer=${homeMessagesContainer.visibility} " +
             "homeEmpty=${homeNoMessages.visibility} settings=${settingsContainer.visibility}")
+    }
+
+    /**
+     * Home header + card badge logic, driven by the persisted home config (NOT by
+     * the currently visible messages):
+     *
+     * - ALL mode            -> title "My subscriptions", cards show the subscription name
+     * - SELECTED, 1 selected -> title = that subscription's display name, cards hide the badge
+     * - SELECTED, >=2        -> title "My subscriptions", cards show the subscription name
+     * - SELECTED, 0 selected -> unchanged empty state (title stays the default)
+     *
+     * The name is the subscription's custom display name, falling back to the topic
+     * (never the URL or the message body).
+     */
+    private fun updateHomeHeaderAndBadges() {
+        val config = homeConfig
+        val singleSubscriptionMode = config != null &&
+            config.mode == Repository.HOME_MODE_SELECTED &&
+            config.selectedSubscriptionIds.size == 1
+
+        if (singleSubscriptionMode) {
+            val id = config.selectedSubscriptionIds.first()
+            val subscription = allSubscriptions.firstOrNull { it.id == id }
+            if (subscription != null) {
+                homeTitle = subscriptionName(subscription)
+                homeAdapter.showSubscriptionBadge = false
+            } else {
+                // Selected subscription no longer exists (about to be cleaned up)
+                homeTitle = null
+                homeAdapter.showSubscriptionBadge = true
+            }
+        } else {
+            homeTitle = null
+            homeAdapter.showSubscriptionBadge = true
+        }
+
+        if (currentTab == TAB_MESSAGES) {
+            title = homeTitle ?: getString(R.string.home_title)
+        }
+    }
+
+    /** Custom display name if set, otherwise the topic. Never the URL. */
+    private fun subscriptionName(subscription: Subscription): String {
+        return subscription.displayName?.takeIf { it.isNotBlank() } ?: subscription.topic
     }
 
     /**

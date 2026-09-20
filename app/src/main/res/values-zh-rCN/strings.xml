@@ -123,6 +123,7 @@
     <string name="notification_dialog_forever">直到手动恢复</string>
     <string name="notification_popup_action_browse">浏览</string>
     <string name="notification_popup_action_cancel">取消</string>
+    <string name="notification_popup_action_copy_code">复制验证码</string>
     <string name="channel_subscriber_notification_noinstant_text_three">已订阅 3 个主题</string>
     <string name="channel_subscriber_notification_noinstant_text_four">已订阅 4 个主题</string>
     <string name="detail_item_download_info_deleted_expired">已删除，链接已失效</string>

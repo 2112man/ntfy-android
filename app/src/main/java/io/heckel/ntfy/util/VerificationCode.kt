@@ -1,0 +1,179 @@
+package io.heckel.ntfy.util
+
+/**
+ * Extracts verification codes (e.g. SMS/2FA codes) from notification messages.
+ *
+ * The goal is to reliably find codes like "123456", "A1B2C3" or "G-123456" while
+ * avoiding false positives such as phone numbers, order numbers, years, dates,
+ * amounts of money and version numbers.
+ *
+ * Strategy (two tiers, first match wins):
+ *
+ * 1. Keyword context: a token that appears right after a keyword such as
+ *    "验证码"/"校验码"/"code"/"OTP" is trusted more, so the rules are relaxed
+ *    (digit-only codes of 3-8 chars, mixed alphanumeric codes of 3-10 chars).
+ * 2. Generic fallback (no keyword): only accept
+ *    - digit-only codes of 4-6 digits, that are not year-like (1900-2099) and
+ *      not directly preceded by a year character ("2026年"), and
+ *    - mixed alphanumeric codes of 5-8 chars containing both digits and letters.
+ *
+ * A candidate is rejected if it looks like:
+ * - part of a longer number group ("400-123-4567" -> "4567" is rejected)
+ * - a phone-like or order-like long number (> 8 digits)
+ * - an amount of money ("¥1234", "1234元", "退款 1234 元")
+ *
+ * This class is pure Kotlin without Android dependencies, so it is fully unit-testable.
+ */
+object VerificationCode {
+
+    // Keyword context: code candidate right after a known keyword
+    private const val KEYWORDS =
+        "验证码|校验码|确认码|动态码|授权码|安全码|口令码|otp|passcode|verification\\s*code|security\\s*code|code"
+    private val KEYWORD_CONTEXT_PATTERN = Regex(
+        "(?<![A-Za-z])(?:$KEYWORDS)[^A-Za-z0-9]{0,10}([A-Za-z0-9]{3,10})",
+        RegexOption.IGNORE_CASE
+    )
+
+    // Generic fallback patterns
+    private val DIGIT_CODE_PATTERN = Regex("(?<![0-9A-Za-z])([0-9]{4,6})(?![0-9A-Za-z])")
+    private val MIXED_CODE_PATTERN = Regex("(?<![A-Za-z0-9])([A-Za-z0-9]{5,8})(?![A-Za-z0-9])")
+
+    // Characters that may glue a candidate to a longer number, e.g. "400-123-4567"
+    private const val NUMBER_SEPARATORS = " -./"
+    private val CURRENCY_BEFORE = setOf('¥', '￥', '$', '＄', '€', '£')
+    private val MONEY_AFTER = setOf('元', '圆', '块', '円')
+
+    /**
+     * Returns the first verification code found in [message], or null if the
+     * message does not appear to contain one.
+     */
+    fun extract(message: String?): String? {
+        if (message.isNullOrBlank()) {
+            return null
+        }
+        val text = message.trim()
+        findAfterKeyword(text)?.let { return it }
+        findGenericDigitCode(text)?.let { return it }
+        findGenericMixedCode(text)?.let { return it }
+        return null
+    }
+
+    /**
+     * Tier 1: a token directly following a keyword. Relaxed rules:
+     * digit-only 3-8 chars, or mixed alphanumeric 3-10 chars with both digits and letters.
+     */
+    private fun findAfterKeyword(text: String): String? {
+        for (match in KEYWORD_CONTEXT_PATTERN.findAll(text)) {
+            val token = match.groupValues[1]
+            if (!isAlphanumeric(token)) {
+                continue
+            }
+            val tokenRange = match.groups[1]?.range ?: continue
+            val tokenStart = tokenRange.first
+            val tokenEnd = tokenRange.last + 1
+            if (isGluedToLongerNumber(text, tokenStart, tokenEnd) || isMoneyOrDateLike(text, tokenStart, tokenEnd)) {
+                continue
+            }
+            val hasDigit = token.any { it.isDigit() }
+            val hasLetter = token.any { it.isLetter() }
+            val valid = if (hasLetter) {
+                hasDigit && token.length in 3..10 // mixed code, e.g. "A1B2C3"
+            } else {
+                token.length in 3..8 // digit-only code, e.g. "123456"
+            }
+            if (valid) {
+                return token
+            }
+        }
+        return null
+    }
+
+    /**
+     * Tier 2: digit-only 4-6 chars without a keyword. Rejects year-like numbers
+     * and numbers glued to other numbers (phone/order number fragments).
+     */
+    private fun findGenericDigitCode(text: String): String? {
+        for (match in DIGIT_CODE_PATTERN.findAll(text)) {
+            val token = match.groupValues[1]
+            val start = match.range.first
+            val end = match.range.last + 1
+            if (isGluedToLongerNumber(text, start, end) || isMoneyOrDateLike(text, start, end)) {
+                continue
+            }
+            if (isYearLike(token)) {
+                continue
+            }
+            return token
+        }
+        return null
+    }
+
+    /**
+     * Tier 3: mixed alphanumeric 5-8 chars (both digits and letters) without a keyword.
+     * These are quite distinctive and rarely appear as phone/order numbers.
+     */
+    private fun findGenericMixedCode(text: String): String? {
+        for (match in MIXED_CODE_PATTERN.findAll(text)) {
+            val token = match.groupValues[1]
+            val start = match.range.first
+            val end = match.range.last + 1
+            if (isGluedToLongerNumber(text, start, end) || isMoneyOrDateLike(text, start, end)) {
+                continue
+            }
+            val hasDigit = token.any { it.isDigit() }
+            val hasLetter = token.any { it.isLetter() }
+            if (hasDigit && hasLetter) {
+                return token
+            }
+        }
+        return null
+    }
+
+    private fun isAlphanumeric(token: String): Boolean {
+        return token.all { it in '0'..'9' || it in 'a'..'z' || it in 'A'..'Z' }
+    }
+
+    /**
+     * "400-123-4567" -> "4567" is preceded by "-" which is preceded by a digit,
+     * so it is part of a longer number group and must be rejected.
+     */
+    private fun isGluedToLongerNumber(text: String, start: Int, end: Int): Boolean {
+        if (start >= 2) {
+            val separator = text[start - 1]
+            if (separator in NUMBER_SEPARATORS && text[start - 2].isDigit()) {
+                return true
+            }
+        }
+        if (end + 1 < text.length) {
+            val separator = text[end]
+            if (separator in NUMBER_SEPARATORS && text[end + 1].isDigit()) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /**
+     * Rejects money amounts ("¥1234", "1234元", "退款 1234 元") and dates ("2026年").
+     */
+    private fun isMoneyOrDateLike(text: String, start: Int, end: Int): Boolean {
+        if (start > 0 && text[start - 1] in CURRENCY_BEFORE) {
+            return true
+        }
+        if (end < text.length) {
+            val next = text[end]
+            if (next in MONEY_AFTER || next == '年') {
+                return true
+            }
+            if (next == ' ' && end + 1 < text.length && text[end + 1] in MONEY_AFTER) {
+                return true // "1234 元"
+            }
+        }
+        return false
+    }
+
+    private fun isYearLike(token: String): Boolean {
+        val value = token.toIntOrNull() ?: return false
+        return value in 1900..2099
+    }
+}

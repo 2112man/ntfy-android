@@ -105,6 +105,7 @@ class NotificationService(val context: Context) {
         maybeAddDownloadAction(builder, notification)
         maybeAddCancelAction(builder, notification)
         maybeAddUserActions(builder, notification)
+        maybeAddCopyCodeAction(builder, notification)
 
         maybeCreateNotificationGroup(groupId, subscriptionGroupName(subscription))
         maybeCreateNotificationChannel(groupId, notification.priority)
@@ -322,15 +323,45 @@ class NotificationService(val context: Context) {
     }
 
     /**
+     * Adds a "Copy code" action to the notification if the message appears to
+     * contain a verification code (e.g. "您的验证码是 884512"). Clicking it copies
+     * only the detected code to the clipboard. Reuses the existing clipboard logic
+     * (see Util.copyToClipboard), which is also used by server-defined "copy" actions.
+     *
+     * The action is not added if the user explicitly defined their own "copy" action.
+     */
+    private fun maybeAddCopyCodeAction(builder: NotificationCompat.Builder, notification: Notification) {
+        val hasCopyAction = notification.actions?.any { it.action.lowercase(Locale.getDefault()) == ACTION_COPY } == true
+        if (hasCopyAction) {
+            return
+        }
+        val code = VerificationCode.extract(decodeMessage(notification)) ?: return
+        Log.d(TAG, "Detected verification code in message; adding copy code action (code: $code)")
+        val intent = Intent(context, UserActionBroadcastReceiver::class.java).apply {
+            putExtra(BROADCAST_EXTRA_TYPE, BROADCAST_TYPE_COPY_CODE)
+            putExtra(BROADCAST_EXTRA_CODE, code)
+        }
+        val pendingIntent = PendingIntent.getBroadcast(context, Random().nextInt(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        builder.addAction(NotificationCompat.Action.Builder(0, context.getString(R.string.notification_popup_action_copy_code), pendingIntent).build())
+    }
+
+    /**
      * Receives the broadcast from
      * - the "http", "broadcast", and "copy" action button (the "view" action is handled differently)
      * - the "download"/"cancel" action button
+     * - the "copy code" action button (client-detected verification codes)
      *
      * Then queues a Worker via WorkManager to execute the action in the background
      */
     class UserActionBroadcastReceiver : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             val type = intent.getStringExtra(BROADCAST_EXTRA_TYPE) ?: return
+            if (type == BROADCAST_TYPE_COPY_CODE) {
+                // Copy-code intents do not carry a notification id: they only copy a code
+                val code = intent.getStringExtra(BROADCAST_EXTRA_CODE) ?: return
+                copyToClipboard(context, context.getString(R.string.notification_popup_action_copy_code), code)
+                return
+            }
             val notificationId = intent.getStringExtra(BROADCAST_EXTRA_NOTIFICATION_ID) ?: return
             when (type) {
                 BROADCAST_TYPE_DOWNLOAD_START -> DownloadManager.enqueue(context, notificationId, userAction = true, DownloadType.ATTACHMENT)
@@ -532,6 +563,9 @@ class NotificationService(val context: Context) {
         const val BROADCAST_TYPE_DOWNLOAD_START = "io.heckel.ntfy.DOWNLOAD_ACTION_START"
         const val BROADCAST_TYPE_DOWNLOAD_CANCEL = "io.heckel.ntfy.DOWNLOAD_ACTION_CANCEL"
         const val BROADCAST_TYPE_USER_ACTION = "io.heckel.ntfy.USER_ACTION_RUN"
+        const val BROADCAST_TYPE_COPY_CODE = "io.heckel.ntfy.COPY_CODE"
+
+        const val BROADCAST_EXTRA_CODE = "code"
 
         private const val TAG = "NtfyNotifService"
 

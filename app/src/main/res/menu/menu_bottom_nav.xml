@@ -1,0 +1,15 @@
+<menu
+    xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/bottom_nav_messages"
+        android:icon="@drawable/ic_bottom_messages_24dp"
+        android:title="@string/bottom_nav_messages_title" />
+    <item
+        android:id="@+id/bottom_nav_subscriptions"
+        android:icon="@drawable/ic_bottom_subscriptions_24dp"
+        android:title="@string/bottom_nav_subscriptions_title" />
+    <item
+        android:id="@+id/bottom_nav_settings"
+        android:icon="@drawable/ic_bottom_settings_24dp"
+        android:title="@string/bottom_nav_settings_title" />
+</menu>

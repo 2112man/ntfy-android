@@ -31,6 +31,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.text.HtmlCompat
+import androidx.fragment.app.DialogFragment
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -50,8 +51,10 @@ import com.google.android.material.floatingactionbutton.FloatingActionButton
 import io.heckel.ntfy.BuildConfig
 import io.heckel.ntfy.R
 import io.heckel.ntfy.app.Application
+import io.heckel.ntfy.db.MessageWithSubscription
 import io.heckel.ntfy.db.Repository
 import io.heckel.ntfy.db.Subscription
+import io.heckel.ntfy.db.User
 import io.heckel.ntfy.firebase.FirebaseMessenger
 import io.heckel.ntfy.msg.ApiService
 import io.heckel.ntfy.msg.DownloadManager
@@ -64,6 +67,7 @@ import io.heckel.ntfy.util.Log
 import io.heckel.ntfy.util.SUBSCRIPTION_ICONS
 import io.heckel.ntfy.util.dangerButton
 import io.heckel.ntfy.util.displayName
+import io.heckel.ntfy.util.decodeMessage
 import io.heckel.ntfy.util.formatDateShort
 import io.heckel.ntfy.util.isDarkThemeOn
 import io.heckel.ntfy.util.isIgnoringBatteryOptimizations
@@ -85,9 +89,15 @@ import androidx.core.view.size
 import androidx.core.view.get
 import androidx.core.net.toUri
 
-class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, NotificationFragment.NotificationSettingsListener {
+class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, NotificationFragment.NotificationSettingsListener,
+    androidx.preference.PreferenceFragmentCompat.OnPreferenceStartFragmentCallback,
+    UserFragment.UserDialogListener, CustomHeaderFragment.CustomHeaderDialogListener,
+    DefaultServerFragment.DefaultServerDialogListener {
     private val viewModel by viewModels<SubscriptionsViewModel> {
         SubscriptionsViewModelFactory((application as Application).repository)
+    }
+    private val homeViewModel by viewModels<MessagesViewModel> {
+        MessagesViewModelFactory((application as Application).repository)
     }
     private val repository by lazy { (application as Application).repository }
     private val api by lazy { ApiService(this) }
@@ -100,6 +110,17 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
     private lateinit var mainListContainer: SwipeRefreshLayout
     private lateinit var adapter: MainAdapter
     private lateinit var fab: FloatingActionButton
+    private lateinit var bottomNav: com.google.android.material.bottomnavigation.BottomNavigationView
+    private lateinit var homeListContainer: SwipeRefreshLayout
+    private lateinit var homeList: RecyclerView
+    private lateinit var homeAdapter: MessagesAdapter
+
+    // Tab state: the messages tab is the default start screen
+    private var currentTab = TAB_MESSAGES
+    private var hasSubscriptions = false
+    private var hasMessages = false
+    private var homeSearchQuery: String? = null
+    private var allMessages: List<MessageWithSubscription> = emptyList()
 
     // Other stuff
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
@@ -189,7 +210,6 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
         mainListContainer.setColorSchemeColors(Colors.swipeToRefreshColor(this))
 
         // Update main list based on viewModel (& its datasource/livedata)
-        val noEntries: View = findViewById(R.id.main_no_subscriptions)
         val onSubscriptionClick = { s: Subscription -> onSubscriptionItemClick(s) }
         val onSubscriptionLongClick = { s: Subscription -> onSubscriptionItemLongClick(s) }
 
@@ -217,13 +237,7 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
             it?.let { subscriptions ->
                 // Update main list
                 adapter.submitList(subscriptions as MutableList<Subscription>)
-                if (it.isEmpty()) {
-                    mainListContainer.visibility = View.GONE
-                    noEntries.visibility = View.VISIBLE
-                } else {
-                    mainListContainer.visibility = View.VISIBLE
-                    noEntries.visibility = View.GONE
-                }
+                hasSubscriptions = subscriptions.isNotEmpty()
 
                 // Add scrub terms to log (in case it gets exported)
                 subscriptions.forEach { s ->
@@ -235,8 +249,70 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
                 showHideBatteryBanner(subscriptions)
                 showHideWebSocketBanner(subscriptions)
                 showHideWebSocketReconnectBanner()
+                applyTabVisibility()
             }
         }
+
+        // Bottom navigation: messages (default start screen), subscriptions, settings
+        bottomNav = findViewById(R.id.bottom_nav)
+        currentTab = loadSavedTab()
+        bottomNav.setOnItemSelectedListener { item ->
+            val newTab = when (item.itemId) {
+                R.id.bottom_nav_subscriptions -> TAB_SUBSCRIPTIONS
+                R.id.bottom_nav_settings -> TAB_SETTINGS
+                else -> TAB_MESSAGES
+            }
+            if (newTab != currentTab) {
+                switchTab(newTab)
+            }
+            true
+        }
+        bottomNav.selectedItemId = when (currentTab) {
+            TAB_SUBSCRIPTIONS -> R.id.bottom_nav_subscriptions
+            TAB_SETTINGS -> R.id.bottom_nav_settings
+            else -> R.id.bottom_nav_messages
+        }
+        updateTitle()
+        applyTabVisibility()
+
+        // Home ("messages") tab: list of all subscribed topics' messages
+        homeListContainer = findViewById(R.id.home_messages_container)
+        homeListContainer.setOnRefreshListener { refreshAllSubscriptions() }
+        homeListContainer.setColorSchemeColors(Colors.swipeToRefreshColor(this))
+
+        homeList = findViewById(R.id.home_messages_list)
+        homeAdapter = MessagesAdapter { msg -> onHomeMessageClick(msg) }
+        homeList.adapter = homeAdapter
+        homeList.clipToPadding = false
+        ViewCompat.setOnApplyWindowInsetsListener(homeList) { v, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.updatePadding(bottom = systemBars.bottom)
+            insets
+        }
+
+        val addSubscriptionButton = findViewById<com.google.android.material.button.MaterialButton>(R.id.home_add_subscription_button)
+        addSubscriptionButton.setOnClickListener { onSubscribeButtonClick() }
+
+        homeViewModel.list().observe(this) { messages ->
+            allMessages = messages.orEmpty()
+            hasMessages = allMessages.isNotEmpty()
+            applyHomeFilter()
+            applyTabVisibility()
+        }
+        homeViewModel.searchQuery.observe(this) { applyHomeFilter() }
+
+        // Back button: pop settings sub-screens first, otherwise default behavior
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (currentTab == TAB_SETTINGS && supportFragmentManager.backStackEntryCount > 0) {
+                    supportFragmentManager.popBackStack()
+                    title = getString(R.string.settings_title)
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
 
         // Add scrub terms to log (in case it gets exported) // FIXME this should be in Log.getFormatted
         repository.getUsersLiveData().observe(this) {
@@ -403,6 +479,7 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
         showHideConnectionErrorMenuItem(repository.getConnectionDetails())
         showHideNoNetworkBanner()
         redrawList()
+        applyTabVisibility()
     }
 
     private fun showHideBatteryBanner(subscriptions: List<Subscription>) {
@@ -525,15 +602,39 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.menu_main_action_bar, menu)
+        // The messages ("home") tab has its own action bar menu (search + add);
+        // the subscriptions and settings tabs share the classic menu
+        val menuRes = if (currentTab == TAB_MESSAGES) R.menu.menu_home_action_bar else R.menu.menu_main_action_bar
+        menuInflater.inflate(menuRes, menu)
         this.menu = menu
-        
+
         // Tint menu icons based on theme
         val toolbarTextColor = Colors.toolbarTextColor(this, repository.getDynamicColorsEnabled(), isDarkThemeOn(this))
         for (i in 0 until menu.size) {
             menu[i].icon?.setTint(toolbarTextColor)
         }
-        
+
+        // Wire up the home tab search box (filters messages by topic/title/body)
+        val searchItem = menu.findItem(R.id.home_menu_search)
+        if (searchItem != null) {
+            val searchView = searchItem.actionView as? androidx.appcompat.widget.SearchView
+            searchView?.queryHint = getString(R.string.home_search_hint)
+            searchView?.setOnQueryTextListener(object : androidx.appcompat.widget.SearchView.OnQueryTextListener {
+                override fun onQueryTextSubmit(query: String?): Boolean {
+                    homeViewModel.setSearchQuery(query)
+                    return true
+                }
+                override fun onQueryTextChange(newText: String?): Boolean {
+                    homeViewModel.setSearchQuery(newText)
+                    return true
+                }
+            })
+            searchView?.setOnCloseListener {
+                homeViewModel.setSearchQuery(null)
+                false
+            }
+        }
+
         showHideNotificationMenuItems()
         showHideConnectionErrorMenuItem(repository.getConnectionDetails())
         checkSubscriptionsMuted() // This is done here, because then we know that we've initialized the menu
@@ -581,9 +682,9 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
             val rateAppItem = menu.findItem(R.id.main_menu_rate)
             val docsItem = menu.findItem(R.id.main_menu_docs)
             val reportBugItem = menu.findItem(R.id.main_menu_report_bug)
-            rateAppItem.isVisible = BuildConfig.RATE_APP_AVAILABLE
-            docsItem.isVisible = BuildConfig.PAYMENT_LINKS_AVAILABLE // Google Payments Policy, see https://github.com/binwiederhier/ntfy/issues/1463
-            reportBugItem.isVisible = BuildConfig.PAYMENT_LINKS_AVAILABLE // Google Payments Policy, see https://github.com/binwiederhier/ntfy/issues/1463
+            rateAppItem?.isVisible = BuildConfig.RATE_APP_AVAILABLE
+            docsItem?.isVisible = BuildConfig.PAYMENT_LINKS_AVAILABLE // Google Payments Policy, see https://github.com/binwiederhier/ntfy/issues/1463
+            reportBugItem?.isVisible = BuildConfig.PAYMENT_LINKS_AVAILABLE // Google Payments Policy, see https://github.com/binwiederhier/ntfy/issues/1463
 
             // Pause notification icons
             val notificationsEnabledItem = menu.findItem(R.id.main_menu_notifications_enabled)
@@ -629,7 +730,16 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
                 true
             }
             R.id.main_menu_settings -> {
-                startActivity(Intent(this, SettingsActivity::class.java))
+                if (currentTab == TAB_MESSAGES) {
+                    switchTab(TAB_SETTINGS)
+                    bottomNav.selectedItemId = R.id.bottom_nav_settings
+                } else {
+                    startActivity(Intent(this, SettingsActivity::class.java))
+                }
+                true
+            }
+            R.id.home_menu_add -> {
+                onSubscribeButtonClick()
                 true
             }
             R.id.main_menu_report_bug -> {
@@ -932,6 +1042,218 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
         }
     }
 
+    /**
+     * Bottom navigation tab management. The "messages" tab (home) is the default
+     * start screen; the selected tab survives process death via shared preferences.
+     */
+    private fun loadSavedTab(): Int {
+        val prefs = getSharedPreferences(PREFS_UI, MODE_PRIVATE)
+        return when (prefs.getInt(PREFS_TAB, TAB_MESSAGES)) {
+            TAB_SUBSCRIPTIONS -> TAB_SUBSCRIPTIONS
+            TAB_SETTINGS -> TAB_SETTINGS
+            else -> TAB_MESSAGES
+        }
+    }
+
+    private fun switchTab(newTab: Int) {
+        currentTab = newTab
+        getSharedPreferences(PREFS_UI, MODE_PRIVATE)
+            .edit().putInt(PREFS_TAB, newTab).apply()
+        applyTabVisibility()
+        invalidateOptionsMenu()
+        updateTitle()
+    }
+
+    private fun updateTitle() {
+        title = when (currentTab) {
+            TAB_MESSAGES -> getString(R.string.home_title)
+            TAB_SETTINGS -> getString(R.string.settings_title)
+            else -> getString(R.string.main_action_bar_title)
+        }
+    }
+
+    /**
+     * Shows/hides the top-level views (banners, lists, FAB) according to the
+     * currently selected bottom navigation tab.
+     */
+    private fun applyTabVisibility() {
+        val banners = listOf<View>(
+            findViewById(R.id.main_banner_battery),
+            findViewById(R.id.main_banner_websocket),
+            findViewById(R.id.main_banner_websocket_reconnect),
+            findViewById(R.id.main_banner_no_network)
+        )
+        val subscriptionsListContainer = findViewById<View>(R.id.main_subscriptions_list_container)
+        val noSubscriptions = findViewById<View>(R.id.main_no_subscriptions)
+        val homeMessagesContainer = findViewById<View>(R.id.home_messages_container)
+        val homeNoMessages = findViewById<View>(R.id.home_no_messages)
+        val settingsContainer = findViewById<View>(R.id.settings_container)
+
+        when (currentTab) {
+            TAB_MESSAGES -> {
+                subscriptionsListContainer.visibility = View.GONE
+                noSubscriptions.visibility = View.GONE
+                settingsContainer.visibility = View.GONE
+                homeMessagesContainer.visibility = if (hasMessages) View.VISIBLE else View.GONE
+                homeNoMessages.visibility = if (hasMessages) View.GONE else View.VISIBLE
+                banners.forEach { it.visibility = View.GONE }
+            }
+            TAB_SETTINGS -> {
+                subscriptionsListContainer.visibility = View.GONE
+                noSubscriptions.visibility = View.GONE
+                homeMessagesContainer.visibility = View.GONE
+                homeNoMessages.visibility = View.GONE
+                settingsContainer.visibility = View.VISIBLE
+                banners.forEach { it.visibility = View.GONE }
+                ensureSettingsFragment()
+            }
+            else -> { // TAB_SUBSCRIPTIONS
+                homeMessagesContainer.visibility = View.GONE
+                homeNoMessages.visibility = View.GONE
+                settingsContainer.visibility = View.GONE
+                subscriptionsListContainer.visibility = if (hasSubscriptions) View.VISIBLE else View.GONE
+                noSubscriptions.visibility = if (hasSubscriptions) View.GONE else View.VISIBLE
+                banners.forEach { it.visibility = View.VISIBLE } // Individual visibility re-applied in onResume()
+            }
+        }
+        fab.isVisible = currentTab == TAB_SUBSCRIPTIONS
+        Log.d(TAG, "applyTabVisibility: tab=$currentTab hasSubscriptions=$hasSubscriptions hasMessages=$hasMessages " +
+            "subsList=${subscriptionsListContainer.visibility} homeContainer=${homeMessagesContainer.visibility} " +
+            "homeEmpty=${homeNoMessages.visibility} settings=${settingsContainer.visibility}")
+    }
+
+    /**
+     * Filters the home message list by the current search query (topic, title, body).
+     */
+    private fun applyHomeFilter() {
+        val query = homeSearchQuery?.trim()?.lowercase()
+        val filtered = if (query.isNullOrBlank()) {
+            allMessages
+        } else {
+            allMessages.filter { msg ->
+                msg.notification.title.contains(query, ignoreCase = true) ||
+                    decodeMessage(msg.notification).contains(query, ignoreCase = true) ||
+                    msg.topic.contains(query, ignoreCase = true) ||
+                    (msg.displayName ?: "").contains(query, ignoreCase = true)
+            }
+        }
+        Log.d(TAG, "applyHomeFilter: query=$query, ${allMessages.size} total, ${filtered.size} shown")
+        homeAdapter.submitList(filtered)
+    }
+
+    /**
+     * Opens the topic detail view for a message clicked on the home screen.
+     */
+    private fun onHomeMessageClick(msg: MessageWithSubscription) {
+        Log.d(TAG, "Home: opening detail view for message ${msg.notification.id} (topic ${msg.topic})")
+        lifecycleScope.launch(Dispatchers.IO) {
+            val subscription = repository.getSubscription(msg.notification.subscriptionId)
+            launch(Dispatchers.Main) {
+                if (subscription != null) {
+                    startDetailView(subscription)
+                } else {
+                    Toast.makeText(this@MainActivity, R.string.home_no_messages_text, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    /**
+     * Settings tab: lazily adds the existing main settings fragment to the settings
+     * container. Nested screens (user management etc.) are opened via
+     * onPreferenceStartFragmentCallback within the same container.
+     */
+    private fun ensureSettingsFragment() {
+        if (supportFragmentManager.findFragmentById(R.id.settings_container) == null) {
+            supportFragmentManager.beginTransaction()
+                .replace(R.id.settings_container, SettingsActivity.SettingsFragment())
+                .commit()
+        }
+    }
+
+    override fun onPreferenceStartFragment(
+        caller: androidx.preference.PreferenceFragmentCompat,
+        pref: androidx.preference.Preference
+    ): Boolean {
+        val fragmentClass = pref.fragment ?: return false
+        val fragment = supportFragmentManager.fragmentFactory.instantiate(classLoader, fragmentClass)
+        fragment.arguments = pref.extras
+        supportFragmentManager.beginTransaction()
+            .replace(R.id.settings_container, fragment)
+            .addToBackStack(null)
+            .commit()
+        title = pref.title
+        return true
+    }
+
+    private fun <T> findSettingsFragment(klass: Class<T>): T? {
+        return supportFragmentManager.fragments.filterIsInstance(klass).firstOrNull()
+    }
+
+    override fun onAddUser(dialog: DialogFragment, user: User) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            repository.addUser(user)
+            launch(Dispatchers.Main) {
+                findSettingsFragment(SettingsActivity.UserSettingsFragment::class.java)?.reload()
+            }
+        }
+    }
+
+    override fun onUpdateUser(dialog: DialogFragment, user: User) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            repository.updateUser(user)
+            SubscriberServiceManager(this@MainActivity).refresh()
+            launch(Dispatchers.Main) {
+                findSettingsFragment(SettingsActivity.UserSettingsFragment::class.java)?.reload()
+            }
+        }
+    }
+
+    override fun onDeleteUser(dialog: DialogFragment, baseUrl: String) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            repository.deleteUser(baseUrl)
+            SubscriberServiceManager(this@MainActivity).refresh()
+            launch(Dispatchers.Main) {
+                findSettingsFragment(SettingsActivity.UserSettingsFragment::class.java)?.reload()
+            }
+        }
+    }
+
+    override fun onAddCustomHeader(dialog: DialogFragment, header: io.heckel.ntfy.db.CustomHeader) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            repository.addCustomHeader(header)
+            SubscriberServiceManager(this@MainActivity).refresh()
+            launch(Dispatchers.Main) {
+                findSettingsFragment(SettingsActivity.CustomHeaderSettingsFragment::class.java)?.reload()
+            }
+        }
+    }
+
+    override fun onUpdateCustomHeader(dialog: DialogFragment, oldHeader: io.heckel.ntfy.db.CustomHeader, newHeader: io.heckel.ntfy.db.CustomHeader) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            repository.updateCustomHeader(oldHeader, newHeader)
+            SubscriberServiceManager(this@MainActivity).refresh()
+            launch(Dispatchers.Main) {
+                findSettingsFragment(SettingsActivity.CustomHeaderSettingsFragment::class.java)?.reload()
+            }
+        }
+    }
+
+    override fun onDeleteCustomHeader(dialog: DialogFragment, header: io.heckel.ntfy.db.CustomHeader) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            repository.deleteCustomHeader(header)
+            SubscriberServiceManager(this@MainActivity).refresh()
+            launch(Dispatchers.Main) {
+                findSettingsFragment(SettingsActivity.CustomHeaderSettingsFragment::class.java)?.reload()
+            }
+        }
+    }
+
+    override fun onDefaultServerUpdated(dialog: DialogFragment, url: String) {
+        repository.setDefaultBaseUrl(url)
+        findSettingsFragment(SettingsActivity.SettingsFragment::class.java)?.refreshDefaultServerSummary()
+    }
+
     companion object {
         const val TAG = "NtfyMainActivity"
         const val EXTRA_SUBSCRIPTION_ID = "subscriptionId"
@@ -942,6 +1264,13 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
         const val EXTRA_SUBSCRIPTION_MUTED_UNTIL = "subscriptionMutedUntil"
         const val ANIMATION_DURATION = 80L
         const val ONE_DAY_MILLIS = 86400000L
+
+        // Bottom navigation tabs; the messages tab is the start screen
+        const val TAB_MESSAGES = 0
+        const val TAB_SUBSCRIPTIONS = 1
+        const val TAB_SETTINGS = 2
+        const val PREFS_UI = "io.heckel.ntfy.ui"
+        const val PREFS_TAB = "bottom_nav_tab"
 
         // As per documentation: The minimum repeat interval that can be defined is 15 minutes
         // (same as the JobScheduler API), but in practice 15 doesn't work. Using 16 here.

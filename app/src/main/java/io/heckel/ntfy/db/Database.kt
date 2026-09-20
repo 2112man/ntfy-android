@@ -142,6 +142,17 @@ data class SubscriptionWithMetadata(
     val lastActive: Long
 )
 
+/**
+ * A notification (message) together with the topic/subscription it was received on.
+ * Used by the home ("messages") screen that shows all subscribed topics' messages.
+ */
+data class MessageWithSubscription(
+    @Embedded val notification: Notification,
+    val topic: String,
+    val baseUrl: String,
+    val displayName: String?
+)
+
 @Entity(primaryKeys = ["id", "subscriptionId"])
 data class Notification(
     @ColumnInfo(name = "id") val id: String,
@@ -589,6 +600,16 @@ interface NotificationDao {
 
     @Query("SELECT * FROM notification WHERE subscriptionId = :subscriptionId AND deleted != 1 ORDER BY timestamp DESC")
     fun listFlow(subscriptionId: Long): Flow<List<Notification>>
+
+    @Query("""
+        SELECT n.*, s.topic AS topic, s.baseUrl AS baseUrl, s.displayName AS displayName
+        FROM notification AS n
+        INNER JOIN subscription AS s ON n.subscriptionId = s.id
+        WHERE n.deleted != 1
+        ORDER BY n.timestamp DESC
+        LIMIT 500
+    """)
+    fun listAllWithSubscriptionFlow(): Flow<List<MessageWithSubscription>>
 
     @Query("""
         SELECT * FROM notification

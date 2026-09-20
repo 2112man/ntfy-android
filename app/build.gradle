@@ -13,7 +13,7 @@ android {
     compileSdkVersion 36
 
     defaultConfig {
-        applicationId "io.heckel.ntfy"
+        applicationId "com.man2112.ntfy"
         minSdkVersion 26
         targetSdkVersion 36
 

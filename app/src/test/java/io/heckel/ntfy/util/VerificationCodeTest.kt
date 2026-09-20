@@ -86,4 +86,83 @@ class VerificationCodeTest {
         assertNull(VerificationCode.extract(null))
         assertNull(VerificationCode.extract("欢迎使用 ntfy！"))
     }
+
+    // ---------- Phase 6: anti-false-positive cases (things that look like codes) ----------
+
+    @Test
+    fun `phase6 rejects order and phone numbers with labels`() {
+        assertNull(VerificationCode.extract("订单号：1234567890"))
+        assertNull(VerificationCode.extract("订单号 1234567890"))
+        assertNull(VerificationCode.extract("手机号：13812345678"))
+        assertNull(VerificationCode.extract("手机号 13812345678"))
+    }
+
+    @Test
+    fun `phase6 rejects money amounts`() {
+        assertNull(VerificationCode.extract("支付金额：¥1234"))
+        assertNull(VerificationCode.extract("支付 ¥1234"))
+    }
+
+    @Test
+    fun `phase6 rejects version numbers`() {
+        assertNull(VerificationCode.extract("当前版本 1.2.10"))
+        assertNull(VerificationCode.extract("当前版本：1.2.10"))
+    }
+
+    @Test
+    fun `phase6 rejects dates`() {
+        assertNull(VerificationCode.extract("2026/09/20"))
+        assertNull(VerificationCode.extract("日期 2026/09/20"))
+        assertNull(VerificationCode.extract("2026-09-20"))
+    }
+
+    @Test
+    fun `phase6 rejects times`() {
+        assertNull(VerificationCode.extract("13:38"))
+        assertNull(VerificationCode.extract("会议时间 13:38"))
+    }
+
+    @Test
+    fun `phase6 rejects plain numbers counted as a quantity`() {
+        assertNull(VerificationCode.extract("今天有 123456 人参加活动"))
+        assertNull(VerificationCode.extract("共 123456 个订单"))
+        assertNull(VerificationCode.extract("已送出 520131 份礼品"))
+    }
+
+    @Test
+    fun `phase6 rejects shipping and tracking numbers`() {
+        assertNull(VerificationCode.extract("快递单号：SF1234567890"))
+        assertNull(VerificationCode.extract("快递单号 SF1234567890 已发出"))
+        assertNull(VerificationCode.extract("运单号：1234567890123456"))
+    }
+
+    @Test
+    fun `phase6 six digit plain number is accepted by generic fallback (documented behavior)`() {
+        // No keyword and no other context: a 4-6 digit plain number is still accepted by
+        // the tier-2 generic fallback (that is the documented, deliberately lenient rule
+        // for keyword-less SMS codes). It is NOT unconditional: longer numbers, glued
+        // number groups, years, amounts and quantities are all rejected (see other tests).
+        assertEquals("884512", VerificationCode.extract("流水号：884512"))
+    }
+
+    @Test
+    fun `phase6 mixed alphanumeric account without keyword keeps previous behavior`() {
+        // No verification-code context: mixed alphanumeric tokens are accepted by the
+        // tier-3 fallback. Phase 6 explicitly does not extend or narrow this behavior.
+        assertEquals("A7K92Q", VerificationCode.extract("账号：A7K92Q"))
+    }
+
+    @Test
+    fun `phase6 keeps positive keyword cases working`() {
+        assertEquals("552010", VerificationCode.extract("验证码：552010"))
+        assertEquals("A7K92Q", VerificationCode.extract("验证码：A7K92Q"))
+        assertEquals("583921", VerificationCode.extract("OTP: 583921"))
+    }
+
+    @Test
+    fun `phase6 keeps quantities out while keyword codes still work`() {
+        assertEquals("552010", VerificationCode.extract("您的验证码是 552010，10分钟内有效"))
+        assertEquals("884512", VerificationCode.extract("您的验证码是 884512，10分钟内有效"))
+        assertNull(VerificationCode.extract("今天有 552010 人参加活动"))
+    }
 }

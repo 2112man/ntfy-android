@@ -66,6 +66,8 @@ import io.heckel.ntfy.service.SubscriberService
 import io.heckel.ntfy.service.SubscriberServiceManager
 import io.heckel.ntfy.util.Log
 import io.heckel.ntfy.util.SUBSCRIPTION_ICONS
+import io.heckel.ntfy.util.VerificationCode
+import io.heckel.ntfy.util.copyToClipboard
 import io.heckel.ntfy.util.dangerButton
 import io.heckel.ntfy.util.displayName
 import io.heckel.ntfy.util.decodeMessage
@@ -300,7 +302,10 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
         homeListContainer.setColorSchemeColors(Colors.swipeToRefreshColor(this))
 
         homeList = findViewById(R.id.home_messages_list)
-        homeAdapter = MessagesAdapter { msg -> onHomeMessageClick(msg) }
+        homeAdapter = MessagesAdapter(
+            onClick = { msg -> onHomeMessageClick(msg) },
+            onLongClick = { msg -> showHomeMessageMenu(msg) }
+        )
         homeList.adapter = homeAdapter
         homeList.clipToPadding = false
         ViewCompat.setOnApplyWindowInsetsListener(homeList) { v, insets ->
@@ -1254,7 +1259,58 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
             }
         }
         Log.d(TAG, "applyHomeFilter: query=$query, ${allMessages.size} total, ${filtered.size} shown")
-        homeAdapter.submitList(filtered)
+        homeAdapter.submitMessages(this, filtered)
+    }
+
+    /**
+     * Long-press menu for a home message: copy body, copy verification code (only
+     * when one is detected, using the same VerificationCode rules as everywhere
+     * else) and delete this single message. Regular tap-to-open behavior is not
+     * affected; the card itself keeps only the copy-code button.
+     */
+    private fun showHomeMessageMenu(msg: MessageWithSubscription) {
+        val body = decodeMessage(msg.notification)
+        val code = VerificationCode.extract(body)
+        val copyBodyLabel = getString(R.string.home_copy_body)
+        val copyCodeLabel = getString(R.string.notification_popup_action_copy_code)
+        val deleteLabel = getString(R.string.home_delete_message)
+
+        val items = mutableListOf(copyBodyLabel)
+        if (code != null) {
+            items.add(copyCodeLabel)
+        }
+        items.add(deleteLabel)
+
+        MaterialAlertDialogBuilder(this)
+            .setItems(items.toTypedArray()) { _, which ->
+                val label = items[which]
+                when (label) {
+                    copyBodyLabel -> copyToClipboard(this, copyBodyLabel, body)
+                    copyCodeLabel -> copyToClipboard(this, copyCodeLabel, code!!)
+                    deleteLabel -> confirmDeleteMessage(msg)
+                }
+            }
+            .show()
+    }
+
+    /**
+     * Confirms and deletes a single message (soft delete via the existing
+     * Repository/DAO API; the subscription and all other messages stay untouched).
+     * The home list and search results refresh automatically through the Room flow.
+     */
+    private fun confirmDeleteMessage(msg: MessageWithSubscription) {
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.home_delete_message)
+            .setMessage(R.string.home_delete_message_confirm)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.home_delete_message) { _, _ ->
+                val notificationId = msg.notification.id
+                Log.d(TAG, "Deleting message $notificationId")
+                lifecycleScope.launch(Dispatchers.IO) {
+                    repository.markAsDeleted(notificationId)
+                }
+            }
+            .show()
     }
 
     /**

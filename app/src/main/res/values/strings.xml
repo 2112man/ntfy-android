@@ -345,6 +345,14 @@
     <string name="home_empty_no_selection_text">No subscriptions selected for the home screen.\nPick which subscriptions to show here.</string>
     <string name="home_empty_select_button">Choose subscriptions</string>
     <string name="home_card_copy_code">Copy verification code</string>
+    <string name="home_date_time_pattern" translatable="false">HH:mm</string>
+    <string name="home_date_today">Today</string>
+    <string name="home_date_yesterday">Yesterday</string>
+    <string name="home_date_month_day_pattern">MMM d</string>
+    <string name="home_date_full_pattern" translatable="false">yyyy/M/d</string>
+    <string name="home_copy_body">Copy body</string>
+    <string name="home_delete_message">Delete message</string>
+    <string name="home_delete_message_confirm">Delete this message?</string>
     <string name="notification_popup_file">%1$s\nFile: %2$s</string>
     <string name="notification_popup_file_downloading">Downloading %1$s, %2$d%%\n%3$s</string>
     <string name="notification_popup_file_download_successful">%1$s\nFile: %2$s, downloaded</string>

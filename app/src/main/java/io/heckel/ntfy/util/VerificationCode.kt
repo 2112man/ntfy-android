@@ -20,7 +20,7 @@ package io.heckel.ntfy.util
  * A candidate is rejected if it looks like:
  * - part of a longer number group ("400-123-4567" -> "4567" is rejected)
  * - a phone-like or order-like long number (> 8 digits)
- * - an amount of money ("¥1234", "1234元", "退款 1234 元")
+ * - an amount of money or a quantity ("¥1234", "1234元", "123456 人")
  *
  * This class is pure Kotlin without Android dependencies, so it is fully unit-testable.
  */
@@ -41,7 +41,16 @@ object VerificationCode {
     // Characters that may glue a candidate to a longer number, e.g. "400-123-4567"
     private const val NUMBER_SEPARATORS = " -./"
     private val CURRENCY_BEFORE = setOf('¥', '￥', '$', '＄', '€', '£')
-    private val MONEY_AFTER = setOf('元', '圆', '块', '円')
+
+    // Units/currency right after a number mark it as an amount or a quantity, e.g.
+    // "1234元", "¥1234", or "今天有 123456 人参加活动". Verification codes are never
+    // directly followed by a Chinese measure word, so these are rejected.
+    private val UNIT_AFTER = setOf(
+        '元', '圆', '块', '円', // money
+        '人', '个', '名', '位', '次', '岁', '件', '台', '张', '份', '笔', '条', '项',
+        '组', '批', '种', '页', '只', '辆', '瓶', '包', '枚', '颗', '根', '支', '双',
+        '套', '部', '点', '倍', '层', '楼', '期', '周', '秒'
+    )
 
     /**
      * Returns the first verification code found in [message], or null if the
@@ -154,7 +163,8 @@ object VerificationCode {
     }
 
     /**
-     * Rejects money amounts ("¥1234", "1234元", "退款 1234 元") and dates ("2026年").
+     * Rejects amounts and quantities ("¥1234", "1234元", "退款 1234 元",
+     * "今天有 123456 人参加活动") and dates ("2026年").
      */
     private fun isMoneyOrDateLike(text: String, start: Int, end: Int): Boolean {
         if (start > 0 && text[start - 1] in CURRENCY_BEFORE) {
@@ -162,10 +172,10 @@ object VerificationCode {
         }
         if (end < text.length) {
             val next = text[end]
-            if (next in MONEY_AFTER || next == '年') {
+            if (next in UNIT_AFTER || next == '年') {
                 return true
             }
-            if (next == ' ' && end + 1 < text.length && text[end + 1] in MONEY_AFTER) {
+            if (next == ' ' && end + 1 < text.length && text[end + 1] in UNIT_AFTER) {
                 return true // "1234 元"
             }
         }

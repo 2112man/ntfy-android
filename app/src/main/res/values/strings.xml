@@ -344,6 +344,7 @@
     <string name="home_subs_list_summary_selected">%1$d selected</string>
     <string name="home_empty_no_selection_text">No subscriptions selected for the home screen.\nPick which subscriptions to show here.</string>
     <string name="home_empty_select_button">Choose subscriptions</string>
+    <string name="home_card_copy_code">Copy verification code</string>
     <string name="notification_popup_file">%1$s\nFile: %2$s</string>
     <string name="notification_popup_file_downloading">Downloading %1$s, %2$d%%\n%3$s</string>
     <string name="notification_popup_file_download_successful">%1$s\nFile: %2$s, downloaded</string>

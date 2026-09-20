@@ -95,6 +95,38 @@
             app:layout_constraintTop_toBottomOf="@+id/home_item_title"
             tools:text="您的验证码是 884512，10分钟内有效" />
 
+        <!-- Full subscription address of the message source (secondary text) -->
+        <TextView
+            android:id="@+id/home_item_url"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:maxLines="1"
+            android:ellipsize="middle"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@+id/home_item_message"
+            app:layout_constraintEnd_toStartOf="@+id/home_item_copy_code"
+            tools:text="https://ntfy.sh/wbtest79" />
+
+        <!-- Shown only when the message body contains a verification code -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/home_item_copy_code"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:layout_marginStart="8dp"
+            android:minWidth="48dp"
+            android:minHeight="48dp"
+            android:text="@string/home_card_copy_code"
+            android:visibility="gone"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toBottomOf="@+id/home_item_message"
+            tools:text="复制验证码"
+            tools:visibility="visible" />
+
     </androidx.constraintlayout.widget.ConstraintLayout>
 
 </com.google.android.material.card.MaterialCardView>

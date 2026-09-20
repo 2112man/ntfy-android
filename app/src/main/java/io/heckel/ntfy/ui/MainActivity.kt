@@ -265,10 +265,8 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
                     Log.addScrubTerm(s.topic)
                 }
 
-                // Update battery banner + WebSocket banner + websocket reconnect banner
-                showHideBatteryBanner(subscriptions)
-                showHideWebSocketBanner(subscriptions)
-                showHideWebSocketReconnectBanner()
+                // Update all banners (network, battery, WebSocket, WebSocket reconnect)
+                refreshBanners(subscriptions)
                 updateHomeHeaderAndBadges()
                 applyTabVisibility()
             }
@@ -511,9 +509,24 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
         super.onResume()
         showHideNotificationMenuItems()
         showHideConnectionErrorMenuItem(repository.getConnectionDetails())
-        showHideNoNetworkBanner()
+        refreshBanners(allSubscriptions)
         redrawList()
         applyTabVisibility()
+    }
+
+    /**
+     * Recomputes the visibility of all top banners from their current conditions.
+     *
+     * Every banner must be computed here (and only here), so that no call site can
+     * leave a banner in a stale state: switching tabs, resuming the activity and
+     * subscription list changes all go through this single function. The individual
+     * showHide* functions keep their original business conditions unchanged.
+     */
+    private fun refreshBanners(subscriptions: List<Subscription>) {
+        showHideNoNetworkBanner()
+        showHideBatteryBanner(subscriptions)
+        showHideWebSocketBanner(subscriptions)
+        showHideWebSocketReconnectBanner()
     }
 
     private fun showHideBatteryBanner(subscriptions: List<Subscription>) {
@@ -917,32 +930,45 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
             var errors = 0
             var errorMessage = "" // First error
             var newNotificationsCount = 0
-            repository.getSubscriptions().forEach { subscription ->
-                Log.d(TAG, "Polling subscription: $subscription")
-                try {
-                    val newNotifications = poller.poll(subscription)
-                    newNotificationsCount += newNotifications.size
-                    newNotifications.forEach { notification ->
-                        dispatcher?.dispatch(subscription, notification)
+            try {
+                repository.getSubscriptions().forEach { subscription ->
+                    Log.d(TAG, "Polling subscription: $subscription")
+                    try {
+                        val newNotifications = poller.poll(subscription)
+                        newNotificationsCount += newNotifications.size
+                        newNotifications.forEach { notification ->
+                            dispatcher?.dispatch(subscription, notification)
+                        }
+                    } catch (e: Exception) {
+                        val topic = displayName(appBaseUrl, subscription)
+                        if (errorMessage == "") errorMessage = "$topic: ${e.message}"
+                        errors++
                     }
-                } catch (e: Exception) {
-                    val topic = displayName(appBaseUrl, subscription)
-                    if (errorMessage == "") errorMessage = "$topic: ${e.message}"
-                    errors++
                 }
+            } catch (e: Exception) {
+                // Unexpected failure (e.g. reading the subscription list): still make
+                // sure the refresh indicator is reset below
+                if (errorMessage == "") errorMessage = e.message ?: ""
+                errors++
+                Log.w(TAG, "Unexpected error while polling for new notifications", e)
+            } finally {
+                val toastMessage = if (errors > 0) {
+                    getString(R.string.refresh_message_error, errors, errorMessage)
+                } else if (newNotificationsCount == 0) {
+                    getString(R.string.refresh_message_no_results)
+                } else {
+                    getString(R.string.refresh_message_result, newNotificationsCount)
+                }
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, toastMessage, Toast.LENGTH_LONG).show()
+                    // Reset both swipe-to-refresh indicators (subscriptions list and
+                    // messages home), or the spinner would keep spinning forever
+                    mainListContainer.isRefreshing = false
+                    homeListContainer.isRefreshing = false
+                    Log.d(TAG, "Reset refresh indicators (main and home)")
+                }
+                Log.d(TAG, "Finished polling for new notifications")
             }
-            val toastMessage = if (errors > 0) {
-                getString(R.string.refresh_message_error, errors, errorMessage)
-            } else if (newNotificationsCount == 0) {
-                getString(R.string.refresh_message_no_results)
-            } else {
-                getString(R.string.refresh_message_result, newNotificationsCount)
-            }
-            runOnUiThread {
-                Toast.makeText(this@MainActivity, toastMessage, Toast.LENGTH_LONG).show()
-                mainListContainer.isRefreshing = false
-            }
-            Log.d(TAG, "Finished polling for new notifications")
         }
     }
 
@@ -1151,7 +1177,9 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
                 settingsContainer.visibility = View.GONE
                 subscriptionsListContainer.visibility = if (hasSubscriptions) View.VISIBLE else View.GONE
                 noSubscriptions.visibility = if (hasSubscriptions) View.GONE else View.VISIBLE
-                banners.forEach { it.visibility = View.VISIBLE } // Individual visibility re-applied in onResume()
+                // Never force banners visible here: recompute their conditions instead,
+                // otherwise banners stay visible after their condition is no longer met
+                refreshBanners(allSubscriptions)
             }
         }
         fab.isVisible = currentTab == TAB_SUBSCRIPTIONS

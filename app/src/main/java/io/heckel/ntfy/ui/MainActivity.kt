@@ -1202,24 +1202,37 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
      */
     private fun updateHomeHeaderAndBadges() {
         val config = homeConfig
-        val singleSubscriptionMode = config != null &&
-            config.mode == Repository.HOME_MODE_SELECTED &&
-            config.selectedSubscriptionIds.size == 1
+        val selectedMode = config != null && config.mode == Repository.HOME_MODE_SELECTED
+        val selectedIds: Set<Long> = if (selectedMode) config!!.selectedSubscriptionIds else emptySet()
 
-        if (singleSubscriptionMode) {
-            val id = config.selectedSubscriptionIds.first()
-            val subscription = allSubscriptions.firstOrNull { it.id == id }
-            if (subscription != null) {
-                homeTitle = subscriptionName(subscription)
-                homeAdapter.showSubscriptionBadge = false
-            } else {
-                // Selected subscription no longer exists (about to be cleaned up)
+        when {
+            !selectedMode -> {
+                // All subscriptions: keep the default title and always show the badge
                 homeTitle = null
                 homeAdapter.showSubscriptionBadge = true
             }
-        } else {
-            homeTitle = null
-            homeAdapter.showSubscriptionBadge = true
+            selectedIds.size == 1 -> {
+                val subscription = allSubscriptions.firstOrNull { it.id == selectedIds.first() }
+                if (subscription != null) {
+                    // Single subscription: show its name in the app bar, hide the redundant badge
+                    homeTitle = subscriptionName(subscription)
+                    homeAdapter.showSubscriptionBadge = false
+                } else {
+                    // Selected subscription no longer exists (about to be cleaned up)
+                    homeTitle = null
+                    homeAdapter.showSubscriptionBadge = true
+                }
+            }
+            selectedIds.size > 1 -> {
+                // Several subscriptions: summarize instead of cramming all names into the app bar
+                homeTitle = getString(R.string.home_title_selected_count, selectedIds.size)
+                homeAdapter.showSubscriptionBadge = true
+            }
+            else -> {
+                // Nothing selected: keep the default title (the empty state guides the user)
+                homeTitle = null
+                homeAdapter.showSubscriptionBadge = true
+            }
         }
 
         if (currentTab == TAB_MESSAGES) {

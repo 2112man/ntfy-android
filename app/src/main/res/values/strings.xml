@@ -346,6 +346,7 @@
     <string name="home_empty_select_button">Choose subscriptions</string>
     <string name="home_card_copy_code">Copy verification code</string>
     <string name="home_date_time_pattern" translatable="false">HH:mm</string>
+    <string name="home_title_selected_count">%d subscriptions selected</string>
     <string name="home_date_today">Today</string>
     <string name="home_date_yesterday">Yesterday</string>
     <string name="home_date_month_day_pattern">MMM d</string>

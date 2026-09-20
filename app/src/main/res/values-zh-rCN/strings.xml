@@ -144,6 +144,7 @@
     <string name="home_empty_no_selection_text">还没有选择要在首页显示的订阅。\n选择要显示的订阅后，消息会出现在这里。</string>
     <string name="home_empty_select_button">选择首页订阅</string>
     <string name="home_card_copy_code">复制验证码</string>
+    <string name="home_title_selected_count">已选择 %d 个订阅</string>
     <string name="home_date_today">今天</string>
     <string name="home_date_yesterday">昨天</string>
     <string name="home_date_month_day_pattern">M月d日</string>

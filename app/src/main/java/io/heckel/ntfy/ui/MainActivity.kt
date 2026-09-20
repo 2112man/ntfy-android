@@ -239,6 +239,19 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
                 adapter.submitList(subscriptions as MutableList<Subscription>)
                 hasSubscriptions = subscriptions.isNotEmpty()
 
+                // Clean up home selection entries of deleted subscriptions, so the
+                // "selected subscriptions" home mode does not accumulate stale IDs.
+                // IMPORTANT: only clean when the list actually has data -- on cold
+                // start the observer may first fire with an empty list while the
+                // database is still loading, which must NOT wipe the user's selection.
+                if (subscriptions.isNotEmpty()) {
+                    val selectedHomeIds = repository.getHomeSelectedSubscriptionIds()
+                    val staleHomeIds = selectedHomeIds - subscriptions.map { s -> s.id }.toSet()
+                    if (staleHomeIds.isNotEmpty()) {
+                        repository.removeFromHomeSelection(staleHomeIds)
+                    }
+                }
+
                 // Add scrub terms to log (in case it gets exported)
                 subscriptions.forEach { s ->
                     Log.addScrubTerm(shortUrl(s.baseUrl), Log.TermType.Domain)
@@ -292,6 +305,7 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
 
         val addSubscriptionButton = findViewById<com.google.android.material.button.MaterialButton>(R.id.home_add_subscription_button)
         addSubscriptionButton.setOnClickListener { onSubscribeButtonClick() }
+        updateHomeEmptyState()
 
         homeViewModel.list().observe(this) { messages ->
             allMessages = messages.orEmpty()
@@ -299,7 +313,14 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
             applyHomeFilter()
             applyTabVisibility()
         }
-        homeViewModel.searchQuery.observe(this) { applyHomeFilter() }
+        homeViewModel.searchQuery.observe(this) { query ->
+            homeSearchQuery = query
+            applyHomeFilter()
+        }
+        homeViewModel.config.observe(this) {
+            updateHomeEmptyState()
+            applyTabVisibility()
+        }
 
         // Back button: pop settings sub-screens first, otherwise default behavior
         onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
@@ -742,6 +763,10 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
                 onSubscribeButtonClick()
                 true
             }
+            R.id.home_menu_home_subs -> {
+                openHomeSubscriptionsSettings()
+                true
+            }
             R.id.main_menu_report_bug -> {
                 startActivity(
                     Intent(Intent.ACTION_VIEW, getString(R.string.main_menu_report_bug_url).toUri())
@@ -1123,7 +1148,46 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
     }
 
     /**
+     * Empty state of the home screen distinguishes two cases:
+     * - no subscriptions at all: invite to add a subscription
+     * - "selected subscriptions" mode with an empty selection: invite to pick subscriptions
+     */
+    private fun updateHomeEmptyState() {
+        if (hasMessages) {
+            return
+        }
+        val text = findViewById<TextView>(R.id.home_no_messages_text)
+        val button = findViewById<com.google.android.material.button.MaterialButton>(R.id.home_add_subscription_button)
+        if (!hasSubscriptions) {
+            text.text = getString(R.string.home_no_messages_text)
+            button.text = getString(R.string.home_add_subscription_button)
+            button.setOnClickListener { onSubscribeButtonClick() }
+        } else {
+            text.text = getString(R.string.home_empty_no_selection_text)
+            button.text = getString(R.string.home_empty_select_button)
+            button.setOnClickListener { openHomeSubscriptionsSettings() }
+        }
+    }
+
+    /**
+     * Opens the "home screen subscriptions" configuration screen. Reached from the
+     * messages tab overflow menu or from the empty state button. The screen opens
+     * in the settings tab container, so the back button returns to the settings root.
+     */
+    private fun openHomeSubscriptionsSettings() {
+        switchTab(TAB_SETTINGS)
+        bottomNav.selectedItemId = R.id.bottom_nav_settings
+        supportFragmentManager.beginTransaction()
+            .replace(R.id.settings_container, HomeSubscriptionsFragment())
+            .addToBackStack(null)
+            .commit()
+        title = getString(R.string.home_subs_title)
+    }
+
+    /**
      * Filters the home message list by the current search query (topic, title, body).
+     * The search only covers the current home display range, because the underlying
+     * database query already limits messages to the configured subscriptions.
      */
     private fun applyHomeFilter() {
         val query = homeSearchQuery?.trim()?.lowercase()

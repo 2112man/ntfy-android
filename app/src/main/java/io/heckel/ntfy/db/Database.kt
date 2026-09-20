@@ -153,6 +153,15 @@ data class MessageWithSubscription(
     val displayName: String?
 )
 
+/**
+ * Home screen visibility config: either show messages from ALL subscriptions
+ * (HOME_MODE_ALL) or only from the user-selected subscriptions (HOME_MODE_SELECTED).
+ */
+data class HomeConfig(
+    val mode: String,
+    val selectedSubscriptionIds: Set<Long>
+)
+
 @Entity(primaryKeys = ["id", "subscriptionId"])
 data class Notification(
     @ColumnInfo(name = "id") val id: String,
@@ -610,6 +619,16 @@ interface NotificationDao {
         LIMIT 500
     """)
     fun listAllWithSubscriptionFlow(): Flow<List<MessageWithSubscription>>
+
+    @Query("""
+        SELECT n.*, s.topic AS topic, s.baseUrl AS baseUrl, s.displayName AS displayName
+        FROM notification AS n
+        INNER JOIN subscription AS s ON n.subscriptionId = s.id
+        WHERE n.deleted != 1 AND s.id IN (:subscriptionIds)
+        ORDER BY n.timestamp DESC
+        LIMIT 500
+    """)
+    fun listBySubscriptionsFlow(subscriptionIds: Collection<Long>): Flow<List<MessageWithSubscription>>
 
     @Query("""
         SELECT * FROM notification

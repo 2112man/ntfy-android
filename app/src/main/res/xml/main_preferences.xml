@@ -36,6 +36,11 @@
     </PreferenceCategory>
     <PreferenceCategory app:title="@string/settings_general_header">
         <Preference
+                app:key="@string/home_subs_settings_key"
+                app:title="@string/home_subs_title"
+                app:summary="@string/home_subs_settings_summary"
+                app:fragment="io.heckel.ntfy.ui.HomeSubscriptionsFragment"/>
+        <Preference
                 app:key="@string/settings_general_default_base_url_key"
                 app:title="@string/settings_general_default_base_url_title" />
         <Preference

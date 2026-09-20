@@ -15,6 +15,9 @@ import androidx.lifecycle.map
 import io.heckel.ntfy.msg.ApiService
 import io.heckel.ntfy.util.Log
 import io.heckel.ntfy.util.validUrl
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -358,6 +361,71 @@ class Repository(private val sharedPrefs: SharedPreferences, database: Database)
         return sharedPrefs.getBoolean(SHARED_PREFS_DYNAMIC_COLORS, false)
     }
 
+    /**
+     * Home screen subscription visibility config:
+     * either show messages from ALL subscriptions, or only from the
+     * user-selected subscriptions (persisted as a set of subscription IDs).
+     */
+    fun setHomeMode(mode: String) {
+        sharedPrefs.edit {
+            putString(SHARED_PREFS_HOME_MODE, mode)
+        }
+    }
+
+    fun getHomeMode(): String {
+        return sharedPrefs.getString(SHARED_PREFS_HOME_MODE, HOME_MODE_ALL) ?: HOME_MODE_ALL
+    }
+
+    fun getHomeSelectedSubscriptionIds(): Set<Long> {
+        val raw = sharedPrefs.getStringSet(SHARED_PREFS_HOME_SELECTED_SUBSCRIPTIONS, emptySet()) ?: emptySet()
+        return raw.mapNotNull { it.toLongOrNull() }.toSet()
+    }
+
+    fun setHomeSelectedSubscriptionIds(ids: Set<Long>) {
+        sharedPrefs.edit {
+            putStringSet(SHARED_PREFS_HOME_SELECTED_SUBSCRIPTIONS, ids.map { it.toString() }.toSet())
+        }
+    }
+
+    /**
+     * Removes subscription IDs that no longer exist (e.g. after the user deleted
+     * the subscription) from the home selection, so stale IDs do not pile up.
+     */
+    fun removeFromHomeSelection(ids: Set<Long>) {
+        if (ids.isEmpty()) {
+            return
+        }
+        val current = getHomeSelectedSubscriptionIds()
+        setHomeSelectedSubscriptionIds(current - ids)
+    }
+
+    fun getHomeConfig(): HomeConfig {
+        return HomeConfig(mode = getHomeMode(), selectedSubscriptionIds = getHomeSelectedSubscriptionIds())
+    }
+
+    /**
+     * Emits the home config immediately and again whenever it changes
+     * (mode switch or selection change), so the home screen can re-query.
+     */
+    fun getHomeConfigFlow(): Flow<HomeConfig> = callbackFlow {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == SHARED_PREFS_HOME_MODE || key == SHARED_PREFS_HOME_SELECTED_SUBSCRIPTIONS) {
+                trySend(getHomeConfig())
+            }
+        }
+        sharedPrefs.registerOnSharedPreferenceChangeListener(listener)
+        trySend(getHomeConfig())
+        awaitClose { sharedPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
+
+    fun getAllMessagesFlow(): Flow<List<MessageWithSubscription>> {
+        return notificationDao.listAllWithSubscriptionFlow()
+    }
+
+    fun getMessagesBySubscriptionsFlow(subscriptionIds: Set<Long>): Flow<List<MessageWithSubscription>> {
+        return notificationDao.listBySubscriptionsFlow(subscriptionIds)
+    }
+
     fun setConnectionProtocol(connectionProtocol: String) {
         sharedPrefs.edit {
             putString(SHARED_PREFS_CONNECTION_PROTOCOL, connectionProtocol)
@@ -661,6 +729,11 @@ class Repository(private val sharedPrefs: SharedPreferences, database: Database)
         const val SHARED_PREFS_UNIFIEDPUSH_ENABLED = "UnifiedPushEnabled"
         const val SHARED_PREFS_INSISTENT_MAX_PRIORITY_ENABLED = "InsistentMaxPriority"
         const val SHARED_PREFS_RECORD_LOGS_ENABLED = "RecordLogs"
+
+        const val SHARED_PREFS_HOME_MODE = "HomeMode"
+        const val SHARED_PREFS_HOME_SELECTED_SUBSCRIPTIONS = "HomeSelectedSubscriptions"
+        const val HOME_MODE_ALL = "all"
+        const val HOME_MODE_SELECTED = "selected"
         const val SHARED_PREFS_MESSAGE_BAR_ENABLED = "MessageBarEnabled"
         const val SHARED_PREFS_BATTERY_OPTIMIZATIONS_REMIND_TIME = "BatteryOptimizationsRemindTime" // Timestamp as millis
         const val SHARED_PREFS_WEBSOCKET_REMIND_TIME = "JsonStreamRemindTime" // "Use WebSocket" banner (used to be JSON stream deprecation banner), timestamp as millis

@@ -524,11 +524,17 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
      * service, the WebSocket/JSON connection, notifications and message delivery keep
      * running, and the app can still be launched from the launcher.
      *
-     * Android has no public API to toggle a running task's recents entry, so the state is
-     * expressed through the task's base intent: when the desired state differs from the
-     * current one, the task is recreated once with (or without)
-     * [Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS]. Because the recreated activity's base
-     * intent already carries the desired flag, this never loops.
+     * Android has no public API to toggle a running task's recents entry
+     * (Activity.setExcludeFromRecents is a hidden API), so the desired state is applied by
+     * moving the app into a *new* task whose base intent carries (or does not carry)
+     * [Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS], and removing the old task along with its
+     * recents entry. Reusing the existing task does not work: FLAG_ACTIVITY_CLEAR_TASK keeps
+     * the same task (and therefore the same recents entry) and leaves the base intent
+     * untouched, so the flag would never take effect.
+     *
+     * Because the new task's base intent already carries the desired flag, the check below
+     * short-circuits on the next onResume and this never loops; with the setting off by
+     * default nothing is recreated at all.
      */
     fun applyHideFromRecents() {
         val hide = repository.getHideFromRecents()
@@ -537,15 +543,19 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
         if (currentlyExcluded == hide) {
             return // Already in the desired state
         }
-        Log.d(TAG, "Recreating task to ${if (hide) "hide" else "show"} it in recents")
+        Log.d(TAG, "Moving to a new task to ${if (hide) "hide" else "show"} it in recents")
         val intent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            // A brand new task is required for the recents flag to take effect
+            addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
             if (hide) {
                 addFlags(Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
             }
         }
         startActivity(intent)
+        // Drop the old task so its recents entry disappears (the service and the process
+        // are not affected by this)
+        finishAndRemoveTask()
     }
 
     /** Base intent flags of this app's task, or null if they cannot be read. */

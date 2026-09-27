@@ -257,6 +257,22 @@ class SettingsActivity : AppCompatActivity(), PreferenceFragmentCompat.OnPrefere
                 }
             }
 
+            // Hide from recents
+            val hideFromRecentsPrefId = context?.getString(R.string.settings_general_hide_from_recents_key) ?: return
+            val hideFromRecents: SwitchPreferenceCompat? = findPreference(hideFromRecentsPrefId)
+            hideFromRecents?.isChecked = repository.getHideFromRecents()
+            hideFromRecents?.preferenceDataStore = object : PreferenceDataStore() {
+                override fun putBoolean(key: String?, value: Boolean) {
+                    repository.setHideFromRecents(value)
+                    // Apply right away: the host activity is not recreated when the user
+                    // flips this switch
+                    (activity as? MainActivity)?.applyHideFromRecents()
+                }
+                override fun getBoolean(key: String?, defValue: Boolean): Boolean {
+                    return repository.getHideFromRecents()
+                }
+            }
+
             // Channel settings
             val channelPrefsPrefId = context?.getString(R.string.settings_notifications_channel_prefs_key) ?: return
             val channelPrefs: Preference? = findPreference(channelPrefsPrefId)

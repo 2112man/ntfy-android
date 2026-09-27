@@ -346,6 +346,9 @@
     <string name="home_empty_select_button">Choose subscriptions</string>
     <string name="home_card_copy_code">Copy verification code</string>
     <string name="home_date_time_pattern" translatable="false">HH:mm</string>
+    <string name="settings_general_hide_from_recents_key">settings_general_hide_from_recents</string>
+    <string name="settings_general_hide_from_recents_title">Hide from recent tasks</string>
+    <string name="settings_general_hide_from_recents_summary">Keep Ntfy Plus out of recent tasks while it runs in the background</string>
     <string name="home_title_selected_count">%d subscriptions selected</string>
     <string name="home_date_today">Today</string>
     <string name="home_date_yesterday">Yesterday</string>

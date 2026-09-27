@@ -7,6 +7,7 @@ import android.app.AlarmManager
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Context
+import android.app.ActivityManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
@@ -509,9 +510,57 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
         super.onResume()
         showHideNotificationMenuItems()
         showHideConnectionErrorMenuItem(repository.getConnectionDetails())
+        applyHideFromRecents()
         refreshBanners(allSubscriptions)
         redrawList()
         applyTabVisibility()
+    }
+
+    /**
+     * Hides or shows this app's task in the Android recents screen, according to the
+     * "hide from recents" setting.
+     *
+     * Only the task entry in the recents screen is affected: the process, the foreground
+     * service, the WebSocket/JSON connection, notifications and message delivery keep
+     * running, and the app can still be launched from the launcher.
+     *
+     * Android has no public API to toggle a running task's recents entry, so the state is
+     * expressed through the task's base intent: when the desired state differs from the
+     * current one, the task is recreated once with (or without)
+     * [Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS]. Because the recreated activity's base
+     * intent already carries the desired flag, this never loops.
+     */
+    fun applyHideFromRecents() {
+        val hide = repository.getHideFromRecents()
+        val taskFlags = currentTaskBaseIntentFlags() ?: return // Cannot determine state: leave it as is
+        val currentlyExcluded = (taskFlags and Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS) != 0
+        if (currentlyExcluded == hide) {
+            return // Already in the desired state
+        }
+        Log.d(TAG, "Recreating task to ${if (hide) "hide" else "show"} it in recents")
+        val intent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            if (hide) {
+                addFlags(Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
+            }
+        }
+        startActivity(intent)
+    }
+
+    /** Base intent flags of this app's task, or null if they cannot be read. */
+    private fun currentTaskBaseIntentFlags(): Int? {
+        return try {
+            val activityManager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+            activityManager.appTasks
+                .firstOrNull { it.taskInfo.id == taskId }
+                ?.taskInfo
+                ?.baseIntent
+                ?.flags
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to read task flags: ${e.message}", e)
+            null
+        }
     }
 
     /**

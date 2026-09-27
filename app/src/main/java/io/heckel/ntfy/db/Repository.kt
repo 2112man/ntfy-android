@@ -466,6 +466,21 @@ class Repository(private val sharedPrefs: SharedPreferences, database: Database)
         }
     }
 
+    /**
+     * Whether the app should hide its task from the Android recents screen while
+     * running in the background. Disabled by default, so the app shows up in
+     * recents unless the user explicitly opts in.
+     */
+    fun getHideFromRecents(): Boolean {
+        return sharedPrefs.getBoolean(SHARED_PREFS_HIDE_FROM_RECENTS, false) // Shown in recents by default
+    }
+
+    fun setHideFromRecents(hide: Boolean) {
+        sharedPrefs.edit {
+            putBoolean(SHARED_PREFS_HIDE_FROM_RECENTS, hide)
+        }
+    }
+
     fun getRecordLogs(): Boolean {
         return sharedPrefs.getBoolean(SHARED_PREFS_RECORD_LOGS_ENABLED, false) // Disabled by default
     }
@@ -728,6 +743,7 @@ class Repository(private val sharedPrefs: SharedPreferences, database: Database)
         const val SHARED_PREFS_BROADCAST_ENABLED = "BroadcastEnabled"
         const val SHARED_PREFS_UNIFIEDPUSH_ENABLED = "UnifiedPushEnabled"
         const val SHARED_PREFS_INSISTENT_MAX_PRIORITY_ENABLED = "InsistentMaxPriority"
+        const val SHARED_PREFS_HIDE_FROM_RECENTS = "HideFromRecents"
         const val SHARED_PREFS_RECORD_LOGS_ENABLED = "RecordLogs"
 
         const val SHARED_PREFS_HOME_MODE = "HomeMode"
